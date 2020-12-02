@@ -152,24 +152,29 @@ def write_list_file(filename, l, mode="w"):
 
     os.remove(lockfile)
 
-def primenet_fetch(num_to_get):
+def primenet_fetch(num_to_get, ghzd_to_get = 0):
     if not primenet_login:
         return []
 
     # Manual assignment settings; trial factoring = 2
     assignment = {"cores": "1",
                   "num_to_get": str(num_to_get),
-                  "pref": "2",
-                  "exp_lo": "",
-                  "exp_hi": "",
+                  "ghz_to_get": "",
+                  "pref": "1",
+                  "pref2": "1",
+                  "exp_lo": "10000000",
+                  "exp_hi": "999999999",
     }
 
+    if ghzd_to_get:
+        assignment[ghz_to_get] = str(ghzd_to_get)
+
     try:
-        r = primenet.open(primenet_baseurl + "manual_assignment/?" + ass_generate(assignment) + "B1=Get+Assignments")
+        r = primenet.open(primenet_baseurl + "manual_gpu_assignment/?" + ass_generate(assignment) + "B1=Get+Assignments")
         lines = [line.decode(encoding="ISO-8859-1") for line in r.readlines()]
         return exp_increase(greplike(workpattern, lines), int(options.max_exp))
     except urllib.error.URLError:
-        debug_print(str(datetime.now()) + " " + "URL open error at primenet_fetch")
+        debug_print(str(datetime.now()) + " URL open error at primenet_fetch")
         return []
 
 def gpu72_fetch(num_to_get, ghzd_to_get = 0):
@@ -234,13 +239,9 @@ def get_assignment():
     if w == "locked":
         return "locked"
 
-    fetch = {True: gpu72_fetch,
-             False: primenet_fetch,
-         }
-
     tasks = greplike(workpattern, w)
 
-    if use_gpu72 and options.ghzd_cache != "":
+    if options.ghzd_cache != "":
         ghzd_to_get = ghzd_topup(tasks, int(options.ghzd_cache))
         num_to_get = 0
     else:
@@ -248,21 +249,25 @@ def get_assignment():
         num_to_get = num_topup(tasks, int(options.num_cache))
 
     if num_to_get < 1 and ghzd_to_get == 0:
-        debug_print(str(datetime.now()) + " " + "Cache full, not getting new work")
+        debug_print(str(datetime.now()) + " Cache full, not getting new work")
         # Must write something anyway to clear the lockfile
         new_tasks = []
     else:
         if use_gpu72 and ghzd_to_get > 0:
-            debug_print(str(datetime.now()) + " " + "Fetching " + str(ghzd_to_get) + " GHz-days of assignments")
-            new_tasks = fetch[use_gpu72](num_to_get, ghzd_to_get)
+            debug_print(str(datetime.now()) + " Fettching " + str(ghzd_to_get) + " GHz-days of assignments")
+            new_tasks = gpu72_fetch(num_to_get, ghzd_to_get)
+        elif use_gpu72 and num_to_get > 0:
+            debug_print(str(datetime.now()) + " Fetching " + str(num_to_get) + " assignments")
+            new_tasks = gpu72_fetch(num_to_get)
         else:
-            debug_print(str(datetime.now()) + " " + "Fetching " + str(num_to_get) + " assignments")
-            new_tasks = fetch[use_gpu72](num_to_get)
+            new_tasks = []
 
         # Fallback to primenet in case of problems
-        if use_gpu72 and options.fallback == "1" and num_to_get and len(new_tasks) == 0:
-            debug_print(str(datetime.now()) + " " + "Error retrieving from gpu72.")
-            new_tasks = fetch[not use_gpu72](num_to_get)
+        if options.fallback == "1" and len(new_tasks) == 0:
+            debug_print(str(datetime.now()) + " Retrieved nothing from gpu72. Fetching from PrimeNet.")
+            new_tasks = primenet_fetch(num_to_get, ghzd_to_get)
+
+        debug_print(str(datetime.now()) + " Fetched " + str(len(new_tasks)) + " new assignment(s).")
 
     write_list_file(workfile, new_tasks, "a")
 
