@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # by teknohog
 
@@ -11,18 +11,15 @@
 # This version can run in parallel with the factoring program, as it
 # uses lockfiles to avoid conflicts when updating files.
 
-import sys
-import os.path
-import cookielib
-import urllib2
-import re
-from time import sleep
-import os
-import urllib
+import http.cookiejar
 import math
-from optparse import OptionParser
+import os
+import re
+import sys
+import urllib
 from datetime import datetime
-
+from optparse import OptionParser
+from time import sleep
 
 primenet_baseurl = "https://www.mersenne.org/"
 gpu72_baseurl = "https://www.gpu72.com/"
@@ -134,7 +131,7 @@ def read_list_file(filename):
         else:
             return []
 
-    except OSError, e:
+    except OSError as e:
         if e.errno == 17:
             return "locked"
         else:
@@ -169,8 +166,9 @@ def primenet_fetch(num_to_get):
 
     try:
         r = primenet.open(primenet_baseurl + "manual_assignment/?" + ass_generate(assignment) + "B1=Get+Assignments")
-        return exp_increase(greplike(workpattern, r.readlines()), int(options.max_exp))
-    except urllib2.URLError:
+        lines = [line.decode(encoding="ISO-8859-1") for line in r.readlines()]
+        return exp_increase(greplike(workpattern, lines), int(options.max_exp))
+    except urllib.error.URLError:
         debug_print(str(datetime.now()) + " " + "URL open error at primenet_fetch")
         return []
 
@@ -214,17 +212,19 @@ def gpu72_fetch(num_to_get, ghzd_to_get = 0):
                   "Option": option,
     }
 
-    # This makes a POST instead of GET
-    data = urllib.urlencode(assignment)
-    req = urllib2.Request(gpu72_baseurl + "account/getassignments/" + gpu72_type + "/", data)
-
     try:
-        r = gpu72.open(req)
-        new_tasks = greplike(workpattern, r.readlines())
+        # This makes a POST instead of GET
+        data = urllib.parse.urlencode(assignment).encode()
+        r = gpu72.open(gpu72_baseurl + "account/getassignments/" + gpu72_type + "/", data)
+        lines = [line.decode(encoding="ISO-8859-1") for line in r.readlines()]
+        new_tasks = greplike(workpattern, lines)
         # Remove dupes
         return list(set(new_tasks))
 
-    except urllib2.URLError:
+    except urllib.error.HTTPError as e:
+        debug_print(str(datetime.now()) + " " + "HTTP error at gpu72_fetch: " + str(e.code) + " " + e.reason)
+
+    except urllib.error.URLError:
         debug_print(str(datetime.now()) + " " + "URL open error at gpu72_fetch")
 
     return []
@@ -284,7 +284,7 @@ def submit_work():
     # worktodo.txt any more
 
     files = [resultsfile, sentfile]
-    rs = map(read_list_file, files)
+    rs = list(map(read_list_file, files))
 
     if "locked" in rs:
         # Remove the lock in case one of these was unlocked at start
@@ -303,8 +303,8 @@ def submit_work():
 
     # Useless lines (not including a M#) are now discarded completely.
 
-    results_send = filter(mersenne_find, results)
-    results_keep = filter(lambda x: mersenne_find(x, complete=False), results)
+    results_send = list(filter(mersenne_find, results))
+    results_keep = list(filter(lambda x: mersenne_find(x, complete=False), results))
 
     if len(results_send) == 0:
         debug_print(str(datetime.now()) + " " + "No complete results found to send.")
@@ -321,15 +321,15 @@ def submit_work():
             debug_print(str(datetime.now()) + " " + "Submitting\n" + data)
 
             try:
-                post_data = urllib.urlencode({"data": data})
+                post_data = urllib.parse.urlencode({"data": data}).encode()
                 r = primenet.open(primenet_baseurl + "manual_result/default.php", post_data)
-                res = r.read()
+                res = r.read().decode()
                 if "processing:" in res or "Accepted" in res:
                     sent += sendbatch
                 else:
                     results_keep += sendbatch
                     debug_print(str(datetime.now()) + " " + "Submission failed.")
-            except urllib2.URLError:
+            except urllib.error.URLError:
                 results_keep += sendbatch
                 debug_print(str(datetime.now()) + " " + "URL open error")
 
@@ -382,15 +382,15 @@ workpattern = r"Factor=[^,]*(,[0-9]+){3}"
 sendlimit = 3000
 
 # adapted from http://stackoverflow.com/questions/923296/keeping-a-session-in-python-while-making-http-requests
-primenet_cj = cookielib.CookieJar()
-primenet = urllib2.build_opener(urllib2.HTTPCookieProcessor(primenet_cj))
+primenet_cj = http.cookiejar.CookieJar()
+primenet = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(primenet_cj))
 
 if use_gpu72:
     # Basic http auth
-    password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
+    password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     password_mgr.add_password(None, gpu72_baseurl + "account/", options.guser, options.gpass)
-    handler = urllib2.HTTPBasicAuthHandler(password_mgr)
-    gpu72 = urllib2.build_opener(handler)
+    handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+    gpu72 = urllib.request.build_opener(handler)
 
 while True:
     # Log in to primenet
@@ -400,10 +400,10 @@ while True:
                   }
 
         # This makes a POST instead of GET
-        data = urllib.urlencode(login_data)
+        data = urllib.parse.urlencode(login_data).encode()
         r = primenet.open(primenet_baseurl + "default.php", data)
 
-        if not options.username + "<br>logged in" in r.read():
+        if not options.username + "<br>logged in" in r.read().decode():
             primenet_login = False
             debug_print(str(datetime.now()) + " " + "Login failed.")
         else:
@@ -412,7 +412,7 @@ while True:
                 debug_print(str(datetime.now()) + " " + "Waiting for results file access...")
                 sleep(2)
 
-    except urllib2.URLError:
+    except urllib.error.URLError:
         debug_print(str(datetime.now()) + " " + "Primenet URL open error")
 
     while get_assignment() == "locked":
